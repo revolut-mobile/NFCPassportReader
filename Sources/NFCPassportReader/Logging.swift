@@ -7,8 +7,6 @@
 //
 
 import Foundation
-import OSLog
-
 
 extension Logger {
     /// Using your bundle identifier is a great way to ensure a unique identifier.
@@ -30,3 +28,18 @@ extension Logger {
     static let pace = Logger(subsystem: subsystem, category: "PACE")
 }
 
+// This disables logging, as simplest way to achieve iOS 13 support
+struct Logger : @unchecked Sendable {
+    init(subsystem: String, category: String) {}
+
+    func log(_ message: String) {}
+
+    func trace(_ message: String) {}
+    func debug(_ message: String) {}
+    func info(_ message: String) {}
+    func notice(_ message: String) {}
+    func warning(_ message: String) {}
+    func error(_ message: String) {}
+    func critical(_ message: String) {}
+    func fault(_ message: String) {}
+}

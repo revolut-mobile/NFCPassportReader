@@ -13,7 +13,7 @@ import OSLog
 import UIKit
 import CoreNFC
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 public protocol PassportReaderTrackingDelegate: AnyObject {
     func nfcTagDetected()
     func readCardAccess(cardAccess: CardAccess)
@@ -25,7 +25,7 @@ public protocol PassportReaderTrackingDelegate: AnyObject {
     func bacFailed()
 }
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 extension PassportReaderTrackingDelegate {
     func nfcTagDetected() { /* default implementation */ }
     func readCardAccess(cardAccess: CardAccess) { /* default implementation */ }
@@ -37,7 +37,7 @@ extension PassportReaderTrackingDelegate {
     func bacFailed() { /* default implementation */ }
 }
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 public class PassportReader : NSObject {
     private typealias NFCCheckedContinuation = CheckedContinuation<NFCPassportModel, Error>
     private var nfcContinuation: NFCCheckedContinuation?
@@ -134,7 +134,7 @@ public class PassportReader : NSObject {
     }
 }
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 extension PassportReader : NFCTagReaderSessionDelegate {
     // MARK: - NFCTagReaderSessionDelegate
     public func tagReaderSessionDidBecomeActive(_ session: NFCTagReaderSession) {
@@ -252,7 +252,7 @@ extension PassportReader : NFCTagReaderSessionDelegate {
     }
 }
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 extension PassportReader {
     
     func startReading(tagReader : TagReader) async throws -> NFCPassportModel {
