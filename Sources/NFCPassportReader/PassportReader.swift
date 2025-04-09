@@ -89,9 +89,16 @@ public class PassportReader : NSObject {
     public func overrideNFCDataAmountToRead( amount: Int ) {
         dataAmountToReadOverride = amount
     }
-    
-    public func readPassport( mrzKey : String, tags : [DataGroupId] = [], skipSecureElements : Bool = true, skipCA : Bool = false, skipPACE : Bool = false, useExtendedMode : Bool = false, customDisplayMessage : ((NFCViewDisplayMessage) -> String?)? = nil) async throws -> NFCPassportModel {
-        
+
+    public func readPassport(
+        mrzKey : String,
+        tags : [DataGroupId] = [],
+        skipSecureElements : Bool = true,
+        skipCA : Bool = false,
+        skipPACE : Bool = false,
+        useExtendedMode : Bool = false,
+        customDisplayMessage : (@Sendable (NFCViewDisplayMessage) -> String?)? = nil
+    ) async throws -> NFCPassportModel {
         self.passport = NFCPassportModel()
         self.mrzKey = mrzKey
         self.skipCA = skipCA
