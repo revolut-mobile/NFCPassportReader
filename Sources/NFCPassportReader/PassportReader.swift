@@ -57,6 +57,8 @@ public class PassportReader : NSObject {
     // Extended mode is used for reading eMRTD's that support extended length APDUs
     private var useExtendedMode = false
 
+    private var ignoreDataGroupParseErrors = false
+
     private var bacHandler : BACHandler?
     private var caHandler : ChipAuthenticationHandler?
     private var paceHandler : PACEHandler?
@@ -97,6 +99,7 @@ public class PassportReader : NSObject {
         skipCA : Bool = false,
         skipPACE : Bool = false,
         useExtendedMode : Bool = false,
+        ignoreDataGroupParseErrors : Bool = false,
         customDisplayMessage : (@Sendable (NFCViewDisplayMessage) -> String?)? = nil
     ) async throws -> NFCPassportModel {
         self.passport = NFCPassportModel()
@@ -104,7 +107,8 @@ public class PassportReader : NSObject {
         self.skipCA = skipCA
         self.skipPACE = skipPACE
         self.useExtendedMode = useExtendedMode
-        
+        self.ignoreDataGroupParseErrors = ignoreDataGroupParseErrors
+
         self.dataGroupsToRead.removeAll()
         self.dataGroupsToRead.append( contentsOf:tags)
         self.nfcViewDisplayMessageHandler = customDisplayMessage
@@ -417,7 +421,7 @@ extension PassportReader {
         repeat {
             do {
                 let response = try await tagReader.readDataGroup(dataGroup:dgId)
-                let dg = try DataGroupParser().parseDG(data: response)
+                let dg = try DataGroupParser().parseDG(data: response, ignoreErrors: ignoreDataGroupParseErrors)
                 return dg
             } catch let error as NFCPassportReaderError {
                 Logger.passportReader.error( "TagError reading tag - \(error)" )

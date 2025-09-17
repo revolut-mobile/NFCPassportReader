@@ -19,13 +19,23 @@ class DataGroupParser {
                                       DataGroup15.self, NotImplementedDG.self, SOD.self]
     
     
-    func parseDG( data : [UInt8] ) throws -> DataGroup {
-        
+    func parseDG( data : [UInt8], ignoreErrors: Bool = false ) throws -> DataGroup {
+
         let header = data[0..<4]
         
         let dg = try tagToDG(header[0])
-
-        return try dg.init(data)
+        do {
+            return try dg.init(data)
+        } catch {
+            if ignoreErrors {
+                let failedDG = try FailedToParseDG(data)
+                failedDG.parseError = error
+                failedDG.failedToParseDGId = DataGroupId(rawValue: Int(header[0])) ?? .Unknown
+                return failedDG
+            } else {
+                throw error
+            }
+        }
     }
     
     

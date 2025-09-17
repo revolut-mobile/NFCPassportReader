@@ -21,15 +21,14 @@ public class DataGroup {
     required init( _ data : [UInt8] ) throws {
         self.data = data
         
-        // Skip the first byte which is the header byte
-        pos = 1
-        let _ = try getNextLength()
-        self.body = [UInt8](data[pos...])
-        
         try parse(data)
     }
     
     func parse( _ data:[UInt8] ) throws {
+        // Skip the first byte which is the header byte
+        pos = 1
+        let _ = try getNextLength()
+        self.body = [UInt8](data[pos...])
     }
     
     func getNextTag() throws -> Int {
