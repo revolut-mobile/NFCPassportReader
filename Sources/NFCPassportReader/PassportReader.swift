@@ -52,6 +52,18 @@ struct PartiallyReadDataGroup: Sendable {
     let data: [UInt8]
 }
 
+public actor Isolated<Value> {
+    var value: Value
+
+    init(_ value: Value) {
+        self.value = value
+    }
+
+    public func withValue<R: Sendable, E>(_ body: (inout Value) throws(E) -> R) throws(E) -> R {
+        try body(&value)
+    }
+}
+
 @available(iOS 13, *)
 public class PassportReader : NSObject {
     private typealias NFCCheckedContinuation = CheckedContinuation<NFCPassportModel, Error>
@@ -126,7 +138,7 @@ public class PassportReader : NSObject {
         ignoreDataGroupParseErrors : Bool = false,
         resumeState : PassportReaderResumableState? = nil,
         customDisplayMessage : (@Sendable (NFCViewDisplayMessage) -> String?)? = nil
-    ) async throws -> NFCPassportModel {
+    ) async throws -> Isolated<NFCPassportModel> {
         self.passport = NFCPassportModel()
         self.mrzKey = mrzKey
         self.skipCA = skipCA
@@ -168,9 +180,9 @@ public class PassportReader : NSObject {
         }
         
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try await Isolated(withCheckedThrowingContinuation { continuation in
                 self.nfcContinuation = continuation
-            }
+            })
         } onCancel: { [weak self] in
             self?.readerSession?.invalidate(errorMessage: CancellationError().localizedDescription)
             self?.nfcContinuation?.resume(throwing: CancellationError())
