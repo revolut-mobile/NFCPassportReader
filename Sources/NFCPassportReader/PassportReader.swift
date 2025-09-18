@@ -13,7 +13,7 @@ import OSLog
 import UIKit
 import CoreNFC
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 public protocol PassportReaderTrackingDelegate: AnyObject {
     func nfcTagDetected()
     func readCardAccess(cardAccess: CardAccess)
@@ -25,7 +25,7 @@ public protocol PassportReaderTrackingDelegate: AnyObject {
     func bacFailed()
 }
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 extension PassportReaderTrackingDelegate {
     func nfcTagDetected() { /* default implementation */ }
     func readCardAccess(cardAccess: CardAccess) { /* default implementation */ }
@@ -37,7 +37,22 @@ extension PassportReaderTrackingDelegate {
     func bacFailed() { /* default implementation */ }
 }
 
-@available(iOS 15, *)
+public struct PassportReaderResumableState: Sendable {
+    let dataGroupsRead: [DataGroupId: [UInt8]]
+    let partiallyReadDataGroup: PartiallyReadDataGroup?
+
+    public var totalBytesRead: Int {
+        dataGroupsRead.values.reduce(0) { $0 + $1.count }
+        + (partiallyReadDataGroup?.data.count ?? 0)
+    }
+}
+
+struct PartiallyReadDataGroup: Sendable {
+    let dgId: DataGroupId
+    let data: [UInt8]
+}
+
+@available(iOS 13, *)
 public class PassportReader : NSObject {
     private typealias NFCCheckedContinuation = CheckedContinuation<NFCPassportModel, Error>
     private var nfcContinuation: NFCCheckedContinuation?
@@ -46,8 +61,8 @@ public class PassportReader : NSObject {
     private var passport : NFCPassportModel = NFCPassportModel()
     
     private var readerSession: NFCTagReaderSession?
-    private var currentlyReadingDataGroup : DataGroupId?
-    
+    private var currentlyReadingDataGroupId : DataGroupId?
+    private var currentlyReadingDataGroup : PartiallyReadDataGroup?
     private var dataGroupsToRead : [DataGroupId] = []
     private var readAllDatagroups = false
     private var skipSecureElements = true
@@ -56,6 +71,9 @@ public class PassportReader : NSObject {
     
     // Extended mode is used for reading eMRTD's that support extended length APDUs
     private var useExtendedMode = false
+
+    private var ignoreDataGroupParseErrors = false
+    private var resumeState : PassportReaderResumableState?
 
     private var bacHandler : BACHandler?
     private var caHandler : ChipAuthenticationHandler?
@@ -89,24 +107,44 @@ public class PassportReader : NSObject {
     public func overrideNFCDataAmountToRead( amount: Int ) {
         dataAmountToReadOverride = amount
     }
-    
-    public func readPassport( mrzKey : String, tags : [DataGroupId] = [], skipSecureElements : Bool = true, skipCA : Bool = false, skipPACE : Bool = false, useExtendedMode : Bool = false, customDisplayMessage : ((NFCViewDisplayMessage) -> String?)? = nil) async throws -> NFCPassportModel {
-        
+
+    public func getResumableState() -> PassportReaderResumableState {
+        PassportReaderResumableState(
+            dataGroupsRead: passport.dataGroupsRead.mapValues(\.data),
+            partiallyReadDataGroup: currentlyReadingDataGroup
+        )
+    }
+
+    public func readPassport(
+        mrzKey : String,
+        tags : [DataGroupId] = [],
+        skipSecureElements : Bool = true,
+        skipCA : Bool = false,
+        skipPACE : Bool = false,
+        useExtendedMode : Bool = false,
+        ignoreDataGroupParseErrors : Bool = false,
+        resumeState : PassportReaderResumableState? = nil,
+        customDisplayMessage : (@Sendable (NFCViewDisplayMessage) -> String?)? = nil
+    ) async throws -> NFCPassportModel {
         self.passport = NFCPassportModel()
         self.mrzKey = mrzKey
         self.skipCA = skipCA
         self.skipPACE = skipPACE
         self.useExtendedMode = useExtendedMode
-        
+        self.ignoreDataGroupParseErrors = ignoreDataGroupParseErrors
+
         self.dataGroupsToRead.removeAll()
         self.dataGroupsToRead.append( contentsOf:tags)
         self.nfcViewDisplayMessageHandler = customDisplayMessage
         self.skipSecureElements = skipSecureElements
+        self.currentlyReadingDataGroupId = nil
         self.currentlyReadingDataGroup = nil
         self.bacHandler = nil
         self.caHandler = nil
         self.paceHandler = nil
-        
+
+        self.resumeState = resumeState
+
         // If no tags specified, read all
         if self.dataGroupsToRead.count == 0 {
             // Start off with .COM, will always read (and .SOD but we'll add that after), and then add the others from the COM
@@ -128,13 +166,19 @@ public class PassportReader : NSObject {
             readerSession?.begin()
         }
         
-        return try await withCheckedThrowingContinuation({ (continuation: NFCCheckedContinuation) in
-            self.nfcContinuation = continuation
-        })
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.nfcContinuation = continuation
+            }
+        } onCancel: { [weak self] in
+            self?.readerSession?.invalidate(errorMessage: CancellationError().localizedDescription)
+            self?.nfcContinuation?.resume(throwing: CancellationError())
+            self?.nfcContinuation = nil
+        }
     }
 }
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 extension PassportReader : NFCTagReaderSessionDelegate {
     // MARK: - NFCTagReaderSessionDelegate
     public func tagReaderSessionDidBecomeActive(_ session: NFCTagReaderSession) {
@@ -162,9 +206,13 @@ extension PassportReader : NFCTagReaderSessionDelegate {
                 case NFCReaderError.readerSessionInvalidationErrorUserCanceled:
                     Logger.passportReader.error( "     - User cancelled session" )
                     userError = NFCPassportReaderError.UserCanceled
-                case NFCReaderError.readerSessionInvalidationErrorSessionTimeout:
+                case NFCReaderError.readerSessionInvalidationErrorSessionTimeout,
+                        .readerSessionInvalidationErrorSessionTerminatedUnexpectedly:
                     Logger.passportReader.error("     - Session timeout")
                     userError = NFCPassportReaderError.TimeOutError
+                case .readerSessionInvalidationErrorSystemIsBusy:
+                    Logger.passportReader.error("     - System is busy")
+                    userError = NFCPassportReaderError.SystemIsBusy
                 default:
                     Logger.passportReader.error( "     - some other error - \(readerError.localizedDescription)" )
                     userError = NFCPassportReaderError.UnexpectedError
@@ -212,9 +260,9 @@ extension PassportReader : NFCTagReaderSessionDelegate {
                 if let newAmount = self.dataAmountToReadOverride {
                     tagReader.overrideDataAmountToRead(newAmount: newAmount)
                 }
-                
-                tagReader.progress = { [unowned self] (progress) in
-                    if let dgId = self.currentlyReadingDataGroup {
+                tagReader.progress = { [unowned self] progress, partialData in
+                    if let dgId = self.currentlyReadingDataGroupId {
+                        self.currentlyReadingDataGroup = .init(dgId: dgId, data: partialData)
                         self.updateReaderSessionMessage( alertMessage: NFCViewDisplayMessage.readingDataGroupProgress(dgId, progress) )
                     } else {
                         self.updateReaderSessionMessage( alertMessage: NFCViewDisplayMessage.authenticatingWithPassport(progress) )
@@ -239,6 +287,9 @@ extension PassportReader : NFCTagReaderSessionDelegate {
                     nfcError.errorCode == NFCReaderError.readerTransceiveErrorTagConnectionLost.rawValue {
                     let errorMessage = NFCViewDisplayMessage.error(NFCPassportReaderError.ConnectionError)
                     self.invalidateSession(errorMessage: errorMessage, error: NFCPassportReaderError.ConnectionError)
+                } else if let nfcError = error as? NFCReaderError, nfcError.code == .readerTransceiveErrorSessionInvalidated {
+                    let errorMessage = NFCViewDisplayMessage.error(NFCPassportReaderError.TimeOutError)
+                    self.invalidateSession(errorMessage: errorMessage, error: NFCPassportReaderError.TimeOutError)
                 } else {
                     let errorMessage = NFCViewDisplayMessage.error(NFCPassportReaderError.Unknown(error))
                     self.invalidateSession(errorMessage: errorMessage, error: NFCPassportReaderError.Unknown(error))
@@ -252,7 +303,7 @@ extension PassportReader : NFCTagReaderSessionDelegate {
     }
 }
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 extension PassportReader {
     
     func startReading(tagReader : TagReader) async throws -> NFCPassportModel {
@@ -400,7 +451,8 @@ extension PassportReader {
     
     func readDataGroup( tagReader : TagReader, dgId : DataGroupId ) async throws -> DataGroup?  {
 
-        self.currentlyReadingDataGroup = dgId
+        self.currentlyReadingDataGroupId = dgId
+        defer { currentlyReadingDataGroupId = nil }
         Logger.passportReader.info( "Reading tag - \(dgId.getName())" )
         var readAttempts = 0
         var nfcPassportReaderError: NFCPassportReaderError
@@ -409,8 +461,20 @@ extension PassportReader {
 
         repeat {
             do {
-                let response = try await tagReader.readDataGroup(dataGroup:dgId)
-                let dg = try DataGroupParser().parseDG(data: response)
+                let response: [UInt8]
+                if let resumeState, readAttempts == 0 {
+                    if let readData = resumeState.dataGroupsRead[dgId] {
+                        response = readData
+                    } else if let partial = resumeState.partiallyReadDataGroup, partial.dgId == dgId {
+                        response = try await tagReader.readDataGroup(dataGroup: dgId, resumeData: partial.data)
+                    } else {
+                        response = try await tagReader.readDataGroup(dataGroup: dgId)
+                    }
+                } else {
+                    response = try await tagReader.readDataGroup(dataGroup: dgId)
+                }
+                currentlyReadingDataGroup = nil
+                let dg = try DataGroupParser().parseDG(data: response, ignoreErrors: ignoreDataGroupParseErrors)
                 return dg
             } catch let error as NFCPassportReaderError {
                 Logger.passportReader.error( "TagError reading tag - \(error)" )

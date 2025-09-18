@@ -12,13 +12,13 @@ import OSLog
 #if !os(macOS)
 import CoreNFC
 
-@available(iOS 15, *)
+@available(iOS 13, *)
 public class TagReader {
     var tag : NFCISO7816Tag
     var secureMessaging : SecureMessaging?
     var maxDataLengthToRead : Int = 0xA0  // Should be able to use 256 to read arbitrary amounts of data at full speed BUT this isn't supported across all passports so for reliability just use the smaller amount.
 
-    var progress : ((Int)->())?
+    var progress : ((Int, [UInt8])->())?
 
     init( tag: NFCISO7816Tag ) {
         self.tag = tag
@@ -35,12 +35,12 @@ public class TagReader {
     }
 
 
-    func readDataGroup( dataGroup: DataGroupId ) async throws -> [UInt8]  {
+    func readDataGroup( dataGroup: DataGroupId, resumeData: [UInt8]? = nil ) async throws -> [UInt8]  {
         guard let tag = dataGroup.getFileIDTag() else {
             throw NFCPassportReaderError.UnsupportedDataGroup
         }
         
-        return try await selectFileAndRead(tag: tag )
+        return try await selectFileAndRead(tag: tag, resumeData: resumeData )
     }
     
     func getChallenge() async throws -> ResponseAPDU{
@@ -165,7 +165,7 @@ public class TagReader {
     }
     
 
-    func selectFileAndRead( tag: [UInt8]) async throws -> [UInt8] {
+    func selectFileAndRead(tag: [UInt8], resumeData: [UInt8]? = nil) async throws -> [UInt8] {
         var resp = try await selectFile(tag: tag )
             
         // Read first 4 bytes of header to see how big the data structure is
@@ -182,7 +182,13 @@ public class TagReader {
         var amountRead = o + 1
         
         var data = [UInt8](resp.data[..<amountRead])
-        
+        if let resumeData, resumeData[..<amountRead] == resp.data[..<amountRead] {
+            let alreadyRead = resumeData.count - data.count
+            data = resumeData
+            remaining -= alreadyRead
+            amountRead += alreadyRead
+            Logger.tagReader.debug( "TagReader - Resuming from already read data - \(amountRead) bytes" )
+        }
         Logger.tagReader.debug( "TagReader - Number of data bytes to read - \(remaining)" )
         
         var readAmount : Int = maxDataLengthToRead
@@ -191,7 +197,7 @@ public class TagReader {
                 readAmount = remaining
             }
 
-            self.progress?( Int(Float(amountRead) / Float(remaining+amountRead ) * 100))
+            self.progress?( Int(Float(amountRead) / Float(remaining+amountRead ) * 100), data )
             let offset = intToBin(amountRead, pad:4)
 
             Logger.tagReader.debug( "TagReader - data bytes remaining: \(remaining), will read : \(readAmount)" )

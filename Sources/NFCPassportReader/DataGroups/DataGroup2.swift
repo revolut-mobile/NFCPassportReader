@@ -53,6 +53,7 @@ func getImage() -> UIImage? {
     }
 
     override func parse(_ data: [UInt8]) throws {
+        try super.parse(data)
         var tag = try getNextTag()
         try verifyTag(tag, equals: 0x7F61)
         _ = try getNextLength()

@@ -80,6 +80,7 @@ class SOD : DataGroup {
     }
 
     override func parse(_ data: [UInt8]) throws {
+        try super.parse(data)
         let p = SimpleASN1DumpParser()
         asn1 = try p.parse(data: Data(body))
     }
