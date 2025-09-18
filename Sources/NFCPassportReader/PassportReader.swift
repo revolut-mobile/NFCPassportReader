@@ -167,9 +167,15 @@ public class PassportReader : NSObject {
             readerSession?.begin()
         }
         
-        return try await withCheckedThrowingContinuation({ (continuation: NFCCheckedContinuation) in
-            self.nfcContinuation = continuation
-        })
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.nfcContinuation = continuation
+            }
+        } onCancel: { [weak self] in
+            self?.readerSession?.invalidate(errorMessage: CancellationError().localizedDescription)
+            self?.nfcContinuation?.resume(throwing: CancellationError())
+            self?.nfcContinuation = nil
+        }
     }
 }
 
