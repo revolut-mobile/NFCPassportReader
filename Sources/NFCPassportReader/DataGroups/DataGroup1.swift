@@ -30,6 +30,7 @@ public class DataGroup1 : DataGroup {
     }
     
     override func parse(_ data: [UInt8]) throws {
+        try super.parse(data)
         let tag = try getNextTag()
         try verifyTag(tag, equals: 0x5F1F)
         let body = try getNextValue()
